@@ -1,0 +1,3 @@
+# bimap
+
+Bi-directional map
