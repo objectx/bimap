@@ -1,3 +1,3 @@
 # bimap
 
-Bi-directional map
+Header only Bi-directional map implementation.
