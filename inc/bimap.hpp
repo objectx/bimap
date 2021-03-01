@@ -11,20 +11,30 @@
 #include <utility>
 #include <vector>
 
-template<typename K_, typename V_>
+template<typename K_, typename V_, typename KeyComparator_ = std::less<K_>, typename ValueComparator_ = std::less<V_>>
 class BidirectionalMap {
 public:
-    using self_t = BidirectionalMap<K_, V_>;
+    using self_t = BidirectionalMap<K_, V_, KeyComparator_, ValueComparator_>;
 
-    using key_type    = K_;
-    using mapped_type = V_;
-    using value_type  = std::pair<const K_, const V_>;
+    using key_type      = K_;
+    using mapped_type   = V_;
+    using value_type    = std::pair<const K_, const V_>;
+    using key_compare   = KeyComparator_;
+    using value_compare = ValueComparator_;
 
 private:
-    std::vector<value_type>       items_;
-    mutable std::vector<uint32_t> keys_;
-    mutable std::vector<uint32_t> values_;
-    mutable bool                  dehydrated_ = false;
+    template<typename, typename, typename = void>
+    struct is_transparent : std::false_type {};
+    template<typename T_, typename T2_>
+    struct is_transparent<T_, T2_, std::void_t<typename T_::is_transparent>> : std::true_type {};
+
+private:
+    std::vector<value_type>             items_;
+    mutable std::vector<uint32_t>       keys_;
+    mutable std::vector<uint32_t>       values_;
+    mutable bool                        dehydrated_ = false;
+    [[no_unique_address]] key_compare   cmp_key_    = KeyComparator_ {};
+    [[no_unique_address]] value_compare cmp_value_  = ValueComparator_ {};
 
 public:
     BidirectionalMap () = default;
@@ -51,20 +61,22 @@ public:
         int64_t right = items_.size ();
         while (1 < (right - left)) {
             int64_t mid = left + (right - left) / 2u;
-            if (key <= items_[keys_[mid]].first) {
-                right = mid;
-            }
-            else {
+            if (cmp_key_ (items_[keys_[mid]].first, key)) {
                 left = mid;
             }
+            else {
+                right = mid;
+            }
         }
-        if (key == items_[keys_[right]].first) {
-            return {std::cref (items_[keys_[right]].second)};
+        auto const &k = items_[keys_[right]].first;
+        if (cmp_key_ (key, k) || cmp_key_ (k, key)) {
+            return {};
         }
-        return {};
+        return {std::cref (items_[keys_[right]].second)};
     }
 
-    std::optional<std::reference_wrapper<const V_>> find_key (const V_ &value) const {
+    template<typename U_>
+    std::enable_if_t<is_transparent<key_compare, U_>::value, std::optional<std::reference_wrapper<const V_>>> find_value (const U_ &key) const {
         if (! dehydrated_) {
             dehydrate ();
         }
@@ -72,17 +84,64 @@ public:
         int64_t right = items_.size ();
         while (1 < (right - left)) {
             int64_t mid = left + (right - left) / 2u;
-            if (value <= items_[values_[mid]].second) {
-                right = mid;
-            }
-            else {
+            if (cmp_key_ (items_[keys_[mid]].first, key)) {
                 left = mid;
             }
+            else {
+                right = mid;
+            }
         }
-        if (value == items_[values_[right]].second) {
-            return {std::cref (items_[values_[right]].first)};
+        auto const &k = items_[keys_[right]].first;
+        if (cmp_key_ (key, k) || cmp_key_ (k, key)) {
+            return {};
         }
-        return {};
+        return {std::cref (items_[keys_[right]].second)};
+    }
+
+    std::optional<std::reference_wrapper<const K_>> find_key (const V_ &value) const {
+        if (! dehydrated_) {
+            dehydrate ();
+        }
+        int64_t left  = -1;
+        int64_t right = items_.size ();
+        while (1 < (right - left)) {
+            int64_t mid = left + (right - left) / 2u;
+            if (cmp_value_ (items_[values_[mid]].second, value)) {
+                left = mid;
+            }
+            else {
+                right = mid;
+            }
+        }
+        auto const &v = items_[values_[right]].second;
+        if (cmp_value_ (value, v) || cmp_value_ (v, value)) {
+            return {};
+        }
+        return {std::cref (items_[values_[right]].first)};
+    }
+
+    template<typename U_>
+    std::enable_if_t<is_transparent<value_compare, U_>::value, std::optional<std::reference_wrapper<const K_>>>
+    find_key (const U_ &value) const {
+        if (! dehydrated_) {
+            dehydrate ();
+        }
+        int64_t left  = -1;
+        int64_t right = items_.size ();
+        while (1 < (right - left)) {
+            int64_t mid = left + (right - left) / 2u;
+            if (cmp_value_ (items_[values_[mid]].second, value)) {
+                left = mid;
+            }
+            else {
+                right = mid;
+            }
+        }
+        auto const &v = items_[values_[right]].second;
+        if (cmp_value_ (value, v) || cmp_value_ (v, value)) {
+            return {};
+        }
+        return {std::cref (items_[values_[right]].first)};
     }
 
     void dehydrate () const {
@@ -96,10 +155,10 @@ public:
             values_[i] = i;
         }
         std::sort (keys_.begin (), keys_.end (), [this] (auto const &a, auto const &b) -> bool {
-            return this->items_[a].first < this->items_[b].first;
+            return cmp_key_ (this->items_[a].first, this->items_[b].first);
         });
         std::sort (values_.begin (), values_.end (), [this] (auto const &a, auto const &b) -> bool {
-            return this->items_[a].second < this->items_[b].second;
+            return cmp_value_ (this->items_[a].second, this->items_[b].second);
         });
         dehydrated_ = true;
     }
